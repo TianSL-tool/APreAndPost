@@ -1,0 +1,39 @@
+# Source-only repository: ignore everything by default.
+*
+
+# Keep directories traversable so source files can be discovered.
+!*/
+
+# Source code and source-level project files.
+!*.py
+!*.pyi
+!*.ui
+!*.qrc
+!*.spec
+!*.md
+!*.rst
+!*.toml
+!*.yml
+!*.yaml
+!*.ini
+!*.cfg
+!*.json
+!*.ico
+!.gitignore
+
+# Local environments, generated artifacts, caches, IDE state and vendored models.
+.venv/
+venv/
+venvnew/
+build/
+dist/
+out250707/
+ocr_models/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.idea/
+.vscode/
+.agents/
+.claude/

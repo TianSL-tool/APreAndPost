@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>800</width>
+    <height>600</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>MainWindow</string>
+  </property>
+  <widget class="QWidget" name="centralwidget"/>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>800</width>
+     <height>33</height>
+    </rect>
+   </property>
+   <widget class="QMenu" name="menu">
+    <property name="title">
+     <string>后处理</string>
+    </property>
+    <addaction name="actionMergeH5"/>
+    <addaction name="actionhdf5"/>
+    <addaction name="separator"/>
+    <addaction name="actionfanyanhouchuli"/>
+   </widget>
+   <widget class="QMenu" name="menu_2">
+    <property name="title">
+     <string>前处理</string>
+    </property>
+    <addaction name="actionclipgrip"/>
+    <addaction name="actionjiansuozuijindian"/>
+    <addaction name="actionjiansuozuijindanyaun"/>
+    <addaction name="separator"/>
+    <addaction name="actionAddPressByMat"/>
+    <addaction name="actionChangeEleIdByMat"/>
+    <addaction name="actionChangeMatIdByMat"/>
+    <addaction name="actionChangeFillIDByFill"/>
+    <addaction name="actionChangeAllFillID"/>
+    <addaction name="actionScaleCoorByDirection"/>
+    <addaction name="actionExportElementsByRange"/>
+   </widget>
+   <addaction name="menu"/>
+   <addaction name="menu_2"/>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+  <action name="actionhdf5">
+   <property name="text">
+    <string>hdf5读取节点单元</string>
+   </property>
+  </action>
+  <action name="actionfanyanhouchuli">
+   <property name="text">
+    <string>反演后处理</string>
+   </property>
+  </action>
+  <action name="actionclipgrip">
+   <property name="text">
+    <string>切割三维网格</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::MenuRole::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionjiansuozuijindian">
+   <property name="text">
+    <string>检索最近节点</string>
+   </property>
+  </action>
+  <action name="actionjiansuozuijindanyaun">
+   <property name="text">
+    <string>检索最近单元</string>
+   </property>
+  </action>
+  <action name="actionMergeH5">
+   <property name="text">
+    <string>MergeH5</string>
+   </property>
+  </action>
+  <action name="actionAddPressByMat">
+   <property name="text">
+    <string>添加孔压约束_通过材料对</string>
+   </property>
+  </action>
+  <action name="actionChangeEleIdByMat">
+   <property name="text">
+    <string>更改单元类型_通过给定材料</string>
+   </property>
+  </action>
+  <action name="actionChangeMatIdByMat">
+   <property name="text">
+    <string>更改材料号_通过材料号</string>
+   </property>
+  </action>
+  <action name="actionChangeFillIDByFill">
+   <property name="text">
+    <string>更改填筑号_通过填筑号</string>
+   </property>
+  </action>
+  <action name="actionChangeAllFillID">
+   <property name="text">
+    <string>&#x6240;&#x6709;&#x586B;&#x7B51;&#x53F7;&#x6539;&#x4E3A;&#x7EDF;&#x4E00;&#x503C;</string>
+   </property>
+  </action>
+  <action name="actionScaleCoorByDirection">
+   <property name="text">
+    <string>节点缩放</string>
+   </property>
+  </action>
+  <action name="actionExportElementsByRange">
+   <property name="text">
+    <string>按范围输出单元</string>
+   </property>
+  </action>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
