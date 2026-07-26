@@ -5,7 +5,13 @@ import tempfile
 from pathlib import Path
 from typing import Iterable
 
-from aprepost2.domain import BaseElement, Mesh, Node, create_element
+from aprepost2.domain import (
+    ELEMENT_TYPE_REGISTRY,
+    BaseElement,
+    Mesh,
+    Node,
+    create_element,
+)
 from aprepost2.io.text import detect_text_encoding
 
 
@@ -21,8 +27,7 @@ def _parse_element(values: tuple[int, ...], source: Path, line_number: int) -> B
         return create_element(*attributes, payload)
     except ValueError as exc:
         t_id = attributes[1]
-        from aprepost2.domain.element import _TYPE_REGISTRY
-        if t_id not in _TYPE_REGISTRY:
+        if t_id not in ELEMENT_TYPE_REGISTRY:
             raise ValueError(
                 f"{source} 第 {line_number} 行：不支持的元素类型 "
                 f"/ unsupported element type {t_id}"

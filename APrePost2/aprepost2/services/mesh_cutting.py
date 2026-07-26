@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from time import perf_counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,8 +11,8 @@ from aprepost2.domain import BaseElement, Mesh, Node
 from aprepost2.domain.element import (
     Polyhedron,
     PolygonContact,
-    _deduplicate_polygon,
 )
+from aprepost2.domain.elements.base import deduplicate_polygon
 from aprepost2.io.mesh_io import read_mesh, write_mesh
 from aprepost2.io.text import clean_control_lines
 from aprepost2.services.common import OperationResult, checked_paths
@@ -98,7 +99,7 @@ def parse_cutting_control(path: str | Path) -> tuple[list[CuttingPlane], int]:
                 normal / length,
             )
         )
-    boundary_mode = take(int, "边界处理模式") if cursor < len(tokens) else 0
+    boundary_mode = take(int, "边界处理模式") if cursor < len(tokens) else 1
     if boundary_mode not in (0, 1, 2):
         raise ValueError("边界处理模式只能为 0、1 或 2")
     if cursor != len(tokens):
@@ -115,6 +116,7 @@ class NodeRegistry:
             self.by_coordinate.setdefault(self.key(node.coordinates), node)
         self.next_id = max(mesh.node_map, default=0) + 1
         self.new_node_ids: set[int] = set()
+        self.edge_intersections: dict[tuple[int, int], set[int]] = {}
 
     def key(self, coordinates) -> tuple[float, float, float]:
         return tuple(round(float(value), self.precision) for value in coordinates)
@@ -129,6 +131,14 @@ class NodeRegistry:
             self.by_coordinate[key] = node
             self.new_node_ids.add(node.node_id)
         return node
+
+    def register_edge_intersection(
+        self, start_id: int, end_id: int, node_id: int
+    ) -> None:
+        if node_id in (start_id, end_id):
+            return
+        key = tuple(sorted((int(start_id), int(end_id))))
+        self.edge_intersections.setdefault(key, set()).add(int(node_id))
 
 
 
@@ -166,6 +176,9 @@ def _clip_face(
                 current = np.asarray(mesh.node_map[current_id].coordinates)
                 intersection = registry.get(previous + ratio * (current - previous))
                 mesh.node_map.setdefault(intersection.node_id, intersection)
+                registry.register_edge_intersection(
+                    previous_id, current_id, intersection.node_id
+                )
                 output.append(intersection.node_id)
                 intersections.add(intersection.node_id)
         if current_inside:
@@ -175,7 +188,7 @@ def _clip_face(
         previous_id = current_id
         previous_distance = current_distance
         previous_inside = current_inside
-    polygon = _deduplicate_polygon(output)
+    polygon = deduplicate_polygon(output)
     return (polygon if len(polygon) >= 3 else ()), intersections
 
 
@@ -216,26 +229,105 @@ def _orient_faces_outward(
     return tuple(oriented)
 
 
+def _face_normal(face: tuple[int, ...], mesh: Mesh) -> np.ndarray:
+    points = np.asarray([mesh.node_map[node_id].coordinates for node_id in face])
+    normal = np.zeros(3)
+    for index, point in enumerate(points):
+        normal += np.cross(point, points[(index + 1) % len(points)])
+    return normal
+
+
+def _split_face_between_nodes(
+    face: tuple[int, ...],
+    first_index: int,
+    second_index: int,
+    mesh: Mesh,
+    tolerance: float,
+) -> tuple[tuple[int, ...], tuple[int, ...]] | None:
+    count = len(face)
+    if count < 4:
+        return None
+    if first_index > second_index:
+        first_index, second_index = second_index, first_index
+    if second_index == first_index + 1 or (first_index == 0 and second_index == count - 1):
+        return None
+    first_face = face[first_index : second_index + 1]
+    second_face = face[second_index:] + face[: first_index + 1]
+    if (
+        len(first_face) >= 3
+        and len(second_face) >= 3
+        and np.linalg.norm(_face_normal(first_face, mesh)) > tolerance
+        and np.linalg.norm(_face_normal(second_face, mesh)) > tolerance
+    ):
+        return first_face, second_face
+    return None
+
+
+def _split_faces_along_cutting_planes(
+    faces: tuple[tuple[int, ...], ...],
+    mesh: Mesh,
+    planes: tuple[CuttingPlane, ...],
+    tolerance: float,
+) -> tuple[tuple[int, ...], ...]:
+    pending = list(faces)
+    refined: list[tuple[int, ...]] = []
+    guard = 0
+    while pending:
+        guard += 1
+        if guard > 10000:
+            raise ValueError("面片沿切割面拆分次数过多，可能存在异常面拓扑")
+        face = pending.pop(0)
+        split_faces = None
+        for plane in planes:
+            on_plane = [
+                index
+                for index, node_id in enumerate(face)
+                if abs(_signed_distance(node_id, mesh, plane)) <= tolerance
+            ]
+            if len(on_plane) != 2:
+                continue
+            split_faces = _split_face_between_nodes(
+                face, on_plane[0], on_plane[1], mesh, tolerance
+            )
+            if split_faces is not None:
+                break
+        if split_faces is None:
+            refined.append(face)
+        else:
+            pending[:0] = list(split_faces)
+    return tuple(refined)
+
+
 def _validate_convex_polyhedron(
-    faces: tuple[tuple[int, ...], ...], mesh: Mesh, tolerance: float
+    faces: tuple[tuple[int, ...], ...],
+    mesh: Mesh,
+    tolerance: float,
+    element_id: int | None = None,
 ) -> tuple[tuple[int, ...], ...]:
     oriented = _orient_faces_outward(faces, mesh)
     all_ids = set(node_id for face in oriented for node_id in face)
-    for face in oriented:
+    label = f"单元 {element_id}" if element_id is not None else "单元"
+    for face_index, face in enumerate(oriented, 1):
         points = np.asarray([mesh.node_map[node_id].coordinates for node_id in face])
         normal = np.zeros(3)
         for index, point in enumerate(points):
             normal += np.cross(point, points[(index + 1) % len(points)])
         norm = float(np.linalg.norm(normal))
         if norm <= tolerance:
-            raise ValueError("单元包含退化面，无法执行可靠的三维切割")
+            raise ValueError(f"{label} 包含退化面 {face_index}，无法执行可靠的三维切割")
         normal /= norm
         origin = points[0]
+        face_ids = set(face)
         for node_id in all_ids:
+            if node_id in face_ids:
+                continue
             coordinate = np.asarray(mesh.node_map[node_id].coordinates)
-            if float(np.dot(coordinate - origin, normal)) > tolerance:
+            distance = float(np.dot(coordinate - origin, normal))
+            if distance > tolerance:
                 raise ValueError(
-                    "当前切割算法要求单元为凸多面体；检测到凹多面体或面节点顺序异常"
+                    f"当前切割算法要求单元为凸多面体；{label} 的面 {face_index} "
+                    f"检测到节点 {node_id} 位于外侧，距离 {distance:.6g}，"
+                    "可能是凹多面体或面节点顺序异常"
                 )
     return oriented
 
@@ -247,8 +339,11 @@ def _clip_polyhedron(
     plane: CuttingPlane,
     tolerance: float,
 ) -> tuple[tuple[tuple[int, ...], ...], tuple[tuple[int, ...], ...]] | None:
+    raw_faces = element.faces()
+    if not raw_faces:
+        return None
     faces = _validate_convex_polyhedron(
-        element.faces(), mesh, max(tolerance, 1e-10)
+        raw_faces, mesh, max(tolerance, 1e-10), element.e_id
     )
     unique_ids = set(node_id for face in faces for node_id in face)
     distances = np.asarray(
@@ -308,14 +403,15 @@ def _interface_from_faces(
         np.asarray([mesh.node_map[node_id].coordinates for node_id in second]), axis=0
     )
     bottom, top = (first, second) if np.dot(second_center - first_center, normal) >= 0 else (second, first)
-    return PolygonContact(
+    return PolygonContact.from_surfaces(
         e_id,
         60,
         original.c_id,
         original.m_id,
         original.d_id,
         original.f_id,
-        tuple(bottom) + tuple(top),
+        tuple(bottom),
+        tuple(top),
     )
 
 
@@ -324,18 +420,21 @@ def _make_cut_element(
     faces: tuple[tuple[int, ...], ...],
     mesh: Mesh,
     e_id: int,
+    planes: tuple[CuttingPlane, ...],
+    tolerance: float,
 ) -> BaseElement:
     if original.is_interface:
         return _interface_from_faces(original, faces, mesh, e_id)
-    node_ids = tuple(node_id for face in faces for node_id in face)
-    return Polyhedron(
+    faces = _orient_faces_outward(
+        _split_faces_along_cutting_planes(faces, mesh, planes, tolerance), mesh
+    )
+    return Polyhedron.from_faces(
         e_id,
         57,
         original.c_id,
         original.m_id,
         original.d_id,
         original.f_id,
-        node_ids,
         faces,
     )
 
@@ -357,54 +456,64 @@ def _point_on_segment(point, start, end, tolerance: float) -> tuple[bool, float]
 def _insert_boundary_nodes(
     element: BaseElement,
     mesh: Mesh,
-    new_nodes: list[Node],
-    search_distance: float,
+    edge_intersections: dict[tuple[int, int], set[int]],
+    planes: tuple[CuttingPlane, ...],
     tolerance: float,
 ) -> BaseElement:
     faces = element.faces()
-    center = element.center(mesh.node_map)
-    nearby = [
-        node
-        for node in new_nodes
-        if np.linalg.norm(np.asarray(node.coordinates) - center) <= search_distance
-    ]
-    if not nearby:
-        return element
     changed = False
     updated_faces: list[tuple[int, ...]] = []
     for face in faces:
         updated: list[int] = []
+        inserted_in_face: list[int] = []
         for index, start_id in enumerate(face):
             end_id = face[(index + 1) % len(face)]
             updated.append(start_id)
             start = np.asarray(mesh.node_map[start_id].coordinates)
             end = np.asarray(mesh.node_map[end_id].coordinates)
             insertions: list[tuple[float, int]] = []
-            for node in nearby:
-                if node.node_id in (start_id, end_id):
+            edge_key = tuple(sorted((start_id, end_id)))
+            for node_id in edge_intersections.get(edge_key, ()):
+                if node_id in (start_id, end_id):
                     continue
                 on_edge, parameter = _point_on_segment(
-                    np.asarray(node.coordinates), start, end, tolerance
+                    np.asarray(mesh.node_map[node_id].coordinates), start, end, tolerance
                 )
                 if on_edge and tolerance < parameter < 1.0 - tolerance:
-                    insertions.append((parameter, node.node_id))
+                    insertions.append((parameter, node_id))
             if insertions:
                 changed = True
-                updated.extend(node_id for _, node_id in sorted(set(insertions)))
+                inserted_ids = [node_id for _, node_id in sorted(set(insertions))]
+                updated.extend(inserted_ids)
+                inserted_in_face.extend(inserted_ids)
+        if len(inserted_in_face) == 2:
+            first, second = inserted_in_face
+            first_index = updated.index(first)
+            second_index = updated.index(second)
+            if first_index > second_index:
+                first, second = second, first
+                first_index, second_index = second_index, first_index
+            first_path = updated[first_index : second_index + 1]
+            second_path = updated[second_index:] + updated[: first_index + 1]
+            if len(first_path) >= 3 and len(second_path) >= 3:
+                updated_faces.append(tuple(first_path))
+                updated_faces.append(tuple(second_path))
+                continue
         updated_faces.append(tuple(updated))
     if not changed:
         return element
     if element.is_interface:
         return _interface_from_faces(element, tuple(updated_faces), mesh, element.e_id)
-    faces_tuple = _orient_faces_outward(tuple(updated_faces), mesh)
-    return Polyhedron(
+    faces_tuple = _orient_faces_outward(
+        _split_faces_along_cutting_planes(tuple(updated_faces), mesh, planes, tolerance), mesh
+    )
+    return Polyhedron.from_faces(
         element.e_id,
         57,
         element.c_id,
         element.m_id,
         element.d_id,
         element.f_id,
-        tuple(node_id for face in faces_tuple for node_id in face),
         faces_tuple,
     )
 
@@ -417,15 +526,30 @@ def cut_mesh(
     *,
     overwrite: bool = False,
 ) -> OperationResult:
+    started_at = perf_counter()
+    last_mark = started_at
+    log_lines: list[str] = []
+
+    def mark(stage: str) -> None:
+        nonlocal last_mark
+        now = perf_counter()
+        log_lines.append(
+            f"{stage}：耗时 {now - last_mark:.3f} 秒，累计 {now - started_at:.3f} 秒"
+        )
+        last_mark = now
+
     source, target = checked_paths(input_path, output_path)
     tolerance = float(tolerance)
     if tolerance <= 0 or not math.isfinite(tolerance):
         raise ValueError("切割容差必须为有限正数")
     planes, boundary_mode = parse_cutting_control(control_path)
+    mark(f"读取切割控制文件，切割面 {len(planes)} 个，边界处理模式 {boundary_mode}")
     mesh = read_mesh(source)
+    mark(f"读取网格，节点 {len(mesh.nodes)} 个，单元 {len(mesh.elements)} 个")
     registry = NodeRegistry(mesh)
     original_node_count = len(mesh.nodes)
     output_elements: list[BaseElement] = []
+    selected_count = 0
     cut_count = 0
 
     for element in mesh.elements:
@@ -434,33 +558,84 @@ def cut_mesh(
         if plane is None:
             output_elements.append(element)
             continue
+        selected_count += 1
         clipped = _clip_polyhedron(element, mesh, registry, plane, tolerance)
         if clipped is None:
             output_elements.append(element)
             continue
         positive, negative = clipped
-        output_elements.append(_make_cut_element(element, positive, mesh, element.e_id))
-        output_elements.append(_make_cut_element(element, negative, mesh, -1))
+        output_elements.append(
+            _make_cut_element(
+                element,
+                positive,
+                mesh,
+                element.e_id,
+                tuple(planes),
+                max(tolerance, 1e-8),
+            )
+        )
+        output_elements.append(
+            _make_cut_element(
+                element,
+                negative,
+                mesh,
+                -1,
+                tuple(planes),
+                max(tolerance, 1e-8),
+            )
+        )
         cut_count += 1
+    mark(f"筛选与切割，命中 {selected_count} 个单元，切分 {cut_count} 个原单元")
 
     mesh.nodes = registry.nodes
     mesh.node_map = {node.node_id: node for node in mesh.nodes}
+    boundary_updates = 0
     if boundary_mode:
-        new_nodes = [node for node in mesh.nodes if node.node_id in registry.new_node_ids]
-        maximum_distance = max(plane.search_distance for plane in planes)
-        output_elements = [
-            _insert_boundary_nodes(
-                element, mesh, new_nodes, maximum_distance, max(tolerance, 1e-8)
+        updated_elements: list[BaseElement] = []
+        for element in output_elements:
+            updated = _insert_boundary_nodes(
+                element,
+                mesh,
+                registry.edge_intersections,
+                tuple(planes),
+                max(tolerance, 1e-8),
             )
-            for element in output_elements
-        ]
+            if updated is not element:
+                boundary_updates += 1
+            updated_elements.append(updated)
+        output_elements = updated_elements
+        mark(
+            f"边界协调，检查 {len(output_elements)} 个单元，"
+            f"边索引 {len(registry.edge_intersections)} 条，更新 {boundary_updates} 个单元"
+        )
+    else:
+        mark("边界协调，控制文件明确关闭，跳过")
 
     for new_id, element in enumerate(output_elements, 1):
         element.e_id = new_id
     mesh.elements = output_elements
     mesh.element_map = {element.e_id: element for element in output_elements}
     mesh.validate_connectivity()
+    orientation_errors: list[str] = []
+    for element in output_elements:
+        if not element.is_polyhedron:
+            continue
+        for face_index, reason in element.face_orientation_violations(
+            mesh.node_map, max(tolerance, 1e-10)
+        ):
+            orientation_errors.append(f"单元 {element.e_id} 面 {face_index}：{reason}")
+            if len(orientation_errors) >= 10:
+                break
+        if len(orientation_errors) >= 10:
+            break
+    if orientation_errors:
+        raise ValueError(
+            "输出多面体面节点顺序不满足右手定则外法向要求："
+            + "；".join(orientation_errors)
+        )
+    mark(f"重编号、连通性和面法向检查，输出单元 {len(output_elements)} 个")
     write_mesh(target, mesh, overwrite=overwrite)
+    mark(f"写出网格，新增节点 {len(mesh.nodes) - original_node_count} 个")
     return OperationResult(
         "三维网格切割",
         f"切割完成：{cut_count} 个原单元被切分，新增 "
@@ -470,5 +645,7 @@ def cut_mesh(
             "cut_elements": cut_count,
             "new_nodes": len(mesh.nodes) - original_node_count,
             "output_elements": len(output_elements),
+            "boundary_updates": boundary_updates,
         },
+        tuple(log_lines),
     )

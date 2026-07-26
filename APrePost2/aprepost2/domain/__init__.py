@@ -1,4 +1,37 @@
-from .element import BaseElement, create_element, replace_element_type
+from .elements import (
+    ELEMENT_TYPE_REGISTRY,
+    ELEMENT_RESPONSE_TYPE_BY_T_ID,
+    BaseElement,
+    EdgeStructured2D,
+    ElementCategory,
+    ElementResponseType,
+    HexContact,
+    Hexahedron,
+    HigherOrder,
+    HigherOrderEdge,
+    HigherOrderHexahedron,
+    HigherOrderSlip3D,
+    HigherOrderWedge,
+    HigherOrderWedgeAlt,
+    PayloadFormat,
+    PolygonContact,
+    PolygonSolid2D,
+    Polyhedron,
+    QuadSolid2D,
+    QuadraticQuad2D,
+    QuadraticTriangle2D,
+    QuadStructuredContact,
+    Slip2D,
+    Slip3D,
+    StructuredContact,
+    TriStructuredContact,
+    compatible_t_ids_for_response,
+    create_element,
+    element_response_label,
+    element_response_type,
+    preferred_t_id_for_response,
+    replace_element_type,
+)
 from .mesh import Mesh, Node
 
 # 向后兼容别名 / backward-compatible alias
@@ -6,5 +39,16 @@ Element = BaseElement
 
 __all__ = [
     "Node", "Element", "BaseElement", "Mesh",
-    "create_element", "replace_element_type",
+    "ElementCategory", "PayloadFormat", "ElementResponseType",
+    "ELEMENT_TYPE_REGISTRY", "ELEMENT_RESPONSE_TYPE_BY_T_ID",
+    "QuadSolid2D", "QuadraticQuad2D", "QuadraticTriangle2D",
+    "PolygonSolid2D", "EdgeStructured2D",
+    "Hexahedron", "HigherOrderHexahedron", "HigherOrderWedge",
+    "HigherOrderWedgeAlt", "Polyhedron", "HigherOrder",
+    "HigherOrderEdge",
+    "Slip2D", "HexContact", "Slip3D", "HigherOrderSlip3D",
+    "PolygonContact", "StructuredContact", "QuadStructuredContact",
+    "TriStructuredContact", "create_element", "replace_element_type",
+    "element_response_type", "element_response_label",
+    "compatible_t_ids_for_response", "preferred_t_id_for_response",
 ]

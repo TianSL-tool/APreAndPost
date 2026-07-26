@@ -46,6 +46,32 @@ def _identity_key(value) -> str:
     return str(value).strip()
 
 
+def _measurement_label(frame: pd.DataFrame):
+    """兼容旧测值工作簿中两种 Label 布局。"""
+    if frame.empty:
+        return None
+    first_row = frame.iloc[0]
+    for column, value in enumerate(first_row):
+        if str(value).strip().lower() != "label":
+            continue
+        for candidate in first_row.iloc[column + 1 :]:
+            if not pd.isna(candidate) and str(candidate).strip():
+                return candidate
+    # 最早一批模板没有写“Label”标题，而是直接把标签放在 E1。
+    return _cell(frame, 0, 4)
+
+
+def _resolve_sheet_name(sheets: dict[str, pd.DataFrame], requested: object) -> str | None:
+    """Excel 工作表名按 Excel 自身规则做大小写不敏感匹配。"""
+    text = str(requested).strip()
+    if text in sheets:
+        return text
+    normalized = text.casefold()
+    return next(
+        (name for name in sheets if str(name).strip().casefold() == normalized), None
+    )
+
+
 def _interpolate(
     times,
     values,
@@ -180,10 +206,12 @@ def _point_mappings(control: pd.DataFrame) -> dict[tuple[str, str], PointMapping
         label = _cell(control, row, 2)
         point_id = _cell(control, row, 3)
         result_id = int(_cell(control, row, 4, 0, int) or 0)
+        # control 的 F:H 是三维坐标，I 列是 node/ele 类型。旧版只读取 F:H；
+        # 这里不能把 I 列误当成第 4 个坐标分量。
         coordinates = np.asarray(
             [
                 float(_cell(control, row, column, 0.0, float))
-                for column in range(5, 9)
+                for column in range(5, 8)
             ],
             dtype=np.float64,
         )
@@ -203,12 +231,18 @@ def _load_monitor_points(
     raw = pd.read_excel(scenario.calculation_book, sheet_name=None, header=None)
     first = next(iter(raw.values()))
     group_count = int(_cell(first, 0, 1, 0, int) or 0)
-    label = _cell(first, 0, 4)
+    label = _measurement_label(first)
+    if label is None or not str(label).strip():
+        raise ValueError(
+            f"测值工作簿 {scenario.calculation_book} 的首个工作表未找到测点标签；"
+            "请检查首行是否包含“Label”及其右侧的标签值"
+        )
     groups: list[list[MonitorPoint]] = []
     for group_index in range(group_count):
-        group_name = str(_cell(first, 3 * group_index + 1, 0, ""))
-        if group_name not in raw:
-            raise ValueError(f"测值工作簿缺少工作表：{group_name}")
+        requested_group_name = str(_cell(first, 3 * group_index + 1, 0, ""))
+        group_name = _resolve_sheet_name(raw, requested_group_name)
+        if group_name is None:
+            raise ValueError(f"测值工作簿缺少工作表：{requested_group_name}")
         identifiers = first.iloc[3 * group_index + 2].dropna().to_numpy()
         initial_times = first.iloc[3 * group_index + 3].to_numpy()
         no_header = raw[group_name]
@@ -546,19 +580,43 @@ def inversion_postprocess(
         raise ValueError("反演控制工作簿缺少 control 工作表")
     control = sheets["control"]
     mappings = _point_mappings(control)
+    if not mappings:
+        raise ValueError("control 工作表没有有效的测点映射")
     outputs: list[Path] = []
+    log_lines: list[str] = [
+        f"控制工作簿：{source}",
+        f"已读取 {len(sheets)} 个工作表、{len(mappings)} 条测点映射。",
+        f"请求处理工况数：{int(file_count)}；空间维度：{int(dimension)}D。",
+    ]
     roots = (source.parent, Path.cwd())
     output_root = Path(output_directory).expanduser()
     if str(output_root) == ".":
         output_root = source.parent
     output_root = output_root.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
+    log_lines.append(f"输出目录：{output_root}")
     for scenario_index in range(1, int(file_count) + 1):
-        scenario = _scenario_from_workbook(
-            sheets, control, scenario_index, source.parent
-        )
-        groups = _load_monitor_points(scenario, mappings)
-        _load_calculated_values(groups, scenario, roots)
+        try:
+            scenario = _scenario_from_workbook(
+                sheets, control, scenario_index, source.parent
+            )
+            log_lines.append(
+                f"[{scenario_index}/{int(file_count)}] 工况“{scenario.name}”："
+                f"测值工作簿 {scenario.calculation_book.name}，"
+                f"目标时刻 {len(scenario.end_times)} 个，步时映射 {len(scenario.step_to_time)} 条。"
+            )
+            groups = _load_monitor_points(scenario, mappings)
+            point_count = sum(len(group) for group in groups)
+            log_lines.append(
+                f"[{scenario_index}/{int(file_count)}] 已读取 {len(groups)} 个测点组、"
+                f"{point_count} 个测点；结果方向索引 {scenario.direction}。"
+            )
+            _load_calculated_values(groups, scenario, roots)
+        except Exception as error:
+            scenario_name = str(_cell(control, scenario_index, 0, "未知工况"))
+            raise type(error)(
+                f"第 {scenario_index}/{int(file_count)} 组工况“{scenario_name}”处理失败：{error}"
+            ) from error
         base_name = scenario.calculation_book.name
         summary = output_root / f"out{base_name}"
         full_series = output_root / f"out2{base_name}"
@@ -571,9 +629,13 @@ def inversion_postprocess(
         _write_summary(summary, groups, scenario)
         _write_full_series(full_series, groups, scenario)
         outputs.extend((summary, full_series))
+        log_lines.append(
+            f"[{scenario_index}/{int(file_count)}] 完成：生成 {summary.name}、{full_series.name}。"
+        )
     return OperationResult(
         "反演后处理",
         f"反演后处理完成：处理 {file_count} 组配置，生成 {len(outputs)} 个工作簿。",
         tuple(outputs),
         {"scenarios": int(file_count), "workbooks": len(outputs)},
+        tuple(log_lines),
     )

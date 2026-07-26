@@ -39,7 +39,7 @@ class SearchServiceTests(unittest.TestCase):
         self.assertEqual(int(frame.loc[0, "单元材料号"]), 2)
 
     def test_catalog_covers_original_main_window_actions(self):
-        self.assertEqual(len(TASKS), 15)
+        self.assertEqual(len(TASKS), 26)
         self.assertEqual({task.category for task in TASKS}, {"前处理", "后处理"})
 
 

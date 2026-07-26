@@ -25,6 +25,7 @@ from pre_group.ui_change_matid_by_mat import Ui_ChangeMatIdByMat
 from pre_group.ui_change_fillid_by_fill import  Ui_ChangeFillIdByFill
 from pre_group.ui_change_all_fillid import Ui_ChangeAllFillId
 from pre_group.ui_scale_coor_by_direction import UiScaleCoorByDirection
+from pre_group.ui_scale_all_nodes_by_center_node import UiScaleAllNodesByCenterNode
 from pre_group.export_elements_by_range_dialog import ExportElementsByRangeDialog
 from mainwindow.mainwindow import Ui_MainWindow
 
@@ -125,6 +126,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.actionChangeFillIDByFill.triggered.connect(self.openChangeFillIdByFill)
         self.actionChangeAllFillID.triggered.connect(self.openChangeAllFillId)
         self.actionScaleCoorByDirection.triggered.connect(self.openScaleCoorByDirection)
+        self.actionScaleAllNodesByCenterNode.triggered.connect(self.openScaleAllNodesByCenterNode)
         self.actionExportElementsByRange.triggered.connect(self.openExportElementsByRange)
     def openReadH5Dialog(self):
         # 创建并显示设置弹窗
@@ -356,6 +358,26 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                     QMessageBox.warning(dialog, "参数错误", "计算失败！")
             else:
                 # 如果用户点击取消，则退出
+                break
+
+    def openScaleAllNodesByCenterNode(self):
+        dialog = UiScaleAllNodesByCenterNode()
+
+        while True:
+            if dialog.exec() == QDialog.Accepted:
+                try:
+                    parameters = dialog.ui_scale_all_nodes_by_center_node()
+                except Exception as error:
+                    QMessageBox.warning(dialog, "参数错误", f"计算失败：{error}")
+                    continue
+
+                if parameters == 1:
+                    QMessageBox.information(dialog, "计算完成", "计算完成")
+                    break
+                if parameters == 0:
+                    break
+                QMessageBox.warning(dialog, "参数错误", "计算失败！")
+            else:
                 break
 
     def openExportElementsByRange(self):

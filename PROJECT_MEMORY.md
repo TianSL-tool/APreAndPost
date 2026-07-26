@@ -1,6 +1,6 @@
 # APrePost 项目架构记忆
 
-更新时间：2026-07-01
+更新时间：2026-07-08
 
 ## 稳定入口
 
@@ -46,9 +46,14 @@
 
 ## APrePost2 独立重写
 
+- 处理 APrePost2 任务时，先读取 `APrePost2/PROJECT_MEMORY.md`，避免重复扫描新工程。
 - 新程序位于 `APrePost2/`，原程序目录和入口保持不变。
 - 新入口：`APrePost2/run.py`；主窗口：`APrePost2/aprepost2/ui/main_window.py`。
 - `APrePost2/aprepost2/domain/`：轻量节点、单元和网格领域对象。
+- `APrePost2/aprepost2/domain/element.py`：Payload A–G 单元类型体系；每个 `t_id`
+  映射到具体类，由类自身负责节点数、前言、面拓扑、退化签名和类内兼容转换。
+- 单元公共记录头固定为 `e_id, t_id, c_id, m_id, d_id, f_id`；`node_ids`
+  仅保存真实节点编号，不包含面数、边数、阶数或中边节点标志。
 - `APrePost2/aprepost2/io/`：网格与控制文本的流式读取、校验和原子写出。
 - `APrePost2/aprepost2/services/`：全部前后处理用例；UI 不直接实现计算。
 - `APrePost2/aprepost2/ui/`：任务目录、参数对话框和 Qt 后台任务。
@@ -60,3 +65,10 @@
 - `services/inversion.py` 独立实现反演工作簿解析、时间插值、CAD 文本和 Excel 输出。
 - `services/legacy.py` 仅保留早期 APrePost2 函数名别名，不访问旧工程。
 - 新实现的只读筛选和属性修改继续保持节点/单元编号、非目标属性及节点连接顺序。
+
+## 2026-07-08 更新
+
+- 新增“前处理 -> 以节点为中心缩放所有节点”：动作名 `actionScaleAllNodesByCenterNode`。
+- 功能模块：`pre_group/ui_scale_all_nodes_by_center_node.py`；控制文件支持 `CENTER_NODE_ID` 与统一 `SCALE_FACTOR`，也支持 `SCALE_X`、`SCALE_Y`、`SCALE_Z` 分方向缩放。
+- 缩放公式：`x' = x_c + (x - x_c) * scale_x`，`y' = y_c + (y - y_c) * scale_y`，`z' = z_c + (z - z_c) * scale_z`；仅修改节点坐标，保持节点号、单元连接、材料号、填筑号和约束不变。
+- 安全约束：禁止输入网格与输出网格同名；若输出文件已存在，界面执行时必须确认覆盖。

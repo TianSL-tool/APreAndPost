@@ -21,8 +21,12 @@ from PySide6.QtWidgets import (
 )
 
 from aprepost2.services.common import OperationResult
-from aprepost2.ui.task_catalog import TASKS, TASK_BY_KEY
+from aprepost2.ui.task_catalog import TASKS, TASK_BY_KEY, control_file_help_for
 from aprepost2.ui.task_dialog import TaskDialog
+from aprepost2.ui.plt_merge_dialog import (
+    PltSeriesMergeDialog,
+    PltStepMergeDialog,
+)
 from aprepost2.ui.workers import FunctionWorker
 
 
@@ -34,6 +38,7 @@ class MainWindow(QMainWindow):
         self.thread_pool = QThreadPool.globalInstance()
         self.active_workers: set[FunctionWorker] = set()
         self.current_task_key: str | None = None
+        self._last_control_help_key: str | None = None
         self._build_ui()
         self._build_menu()
         self._apply_style()
@@ -140,6 +145,7 @@ class MainWindow(QMainWindow):
         self.task_title.setText(task.title)
         self.task_description.setText(task.description)
         self.run_button.setEnabled(True)
+        self._append_control_file_help(task)
 
     def _open_current_task(self) -> None:
         if self.current_task_key:
@@ -147,10 +153,26 @@ class MainWindow(QMainWindow):
 
     def _open_task(self, key: str) -> None:
         task = TASK_BY_KEY[key]
-        dialog = TaskDialog(task, self)
+        self._append_control_file_help(task)
+        if key == "plt_step_merge":
+            dialog = PltStepMergeDialog(self)
+        elif key == "plt_step_series_merge":
+            dialog = PltSeriesMergeDialog(self)
+        else:
+            dialog = TaskDialog(task, self)
         if dialog.exec() != TaskDialog.DialogCode.Accepted or dialog.values is None:
             return
         self._start_worker(task, dialog.values)
+
+    def _append_control_file_help(self, task) -> None:
+        if self._last_control_help_key == task.key:
+            return
+        help_text = control_file_help_for(task)
+        if not help_text:
+            self._last_control_help_key = None
+            return
+        self._append_log(help_text)
+        self._last_control_help_key = task.key
 
     def _start_worker(self, task, values: dict) -> None:
         worker = FunctionWorker(task.handler, values)
@@ -167,6 +189,8 @@ class MainWindow(QMainWindow):
 
     def _task_succeeded(self, result: OperationResult) -> None:
         self._append_log(result.message)
+        for line in result.log_lines:
+            self._append_log(line)
         for path in result.output_paths:
             self._append_log(f"输出：{path}")
         QMessageBox.information(self, result.title, result.message)

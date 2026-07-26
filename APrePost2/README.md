@@ -30,8 +30,11 @@ python -m unittest discover -s tests -v
 `pre_group`、`post`、`Node`、`Element` 或 `Face` 等原工程模块，也不依赖 `pyvista`。
 
 - `services/mesh_cutting.py`：凸多面体和三维界面单元平面切割、交点合并及边界节点插入。
+- `services/mesh_section.py`：按原点和法向量抽取三维实体及 9 系列接触面，分别输出二维多边形与分层二维接触单元。
 - `services/result_reader.py`：HDF5 拓扑继承、节点/单元时程、应力应变派生量和分步输出。
 - `services/inversion.py`：反演配置、测值/计算值插值、CAD 文本和 Excel 输出。
+- `domain/element.py`：按 Payload A–G 建模的具体单元类、严格解析校验和 `t_id` 注册表；
+  详细结构见 [docs/ELEMENT_MODEL.md](docs/ELEMENT_MODEL.md)。
 
 ## 控制文件兼容约定
 

@@ -6,16 +6,20 @@ from pathlib import Path
 
 import h5py
 
-from aprepost2.domain.element import Hexahedron, Polyhedron
+from aprepost2.domain.element import Hexahedron, PolygonSolid2D, Polyhedron, QuadSolid2D
 from aprepost2.io.mesh_io import read_mesh
 from aprepost2.services.hdf5 import merge_hdf5
 from aprepost2.services.mesh_operations import (
     add_pore_constraints,
     change_all_fill_ids,
     change_element_types,
+    convert_element_types_by_material,
     export_elements_by_bounds,
+    merge_close_nodes,
+    offset_mesh_ids,
     remap_fill_ids,
     remap_material_ids,
+    scale_all_nodes_by_center_node,
     scale_coordinates,
 )
 
@@ -128,6 +132,35 @@ class CoreServiceTests(unittest.TestCase):
                 str(self.mesh_path), str(unsupported), str(self.root / "bad.dat")
             )
 
+    def test_material_scoped_topology_conversion(self):
+        source = self.root / "quad_mesh.dat"
+        source.write_text(
+            "node\n"
+            "1 0 0 0 0 0 0 0 0 0 0\n"
+            "2 1 0 0 0 0 0 0 0 0 0\n"
+            "3 1 1 0 0 0 0 0 0 0 0\n"
+            "4 0 1 0 0 0 0 0 0 0 0\n"
+            "5 2 0 0 0 0 0 0 0 0 0\n"
+            "6 2 1 0 0 0 0 0 0 0 0\n"
+            "end node\n"
+            "element\n"
+            "1 1 10 1 0 0 1 2 3 4\n"
+            "2 1 20 2 0 0 2 5 6 3\n"
+            "end element\n",
+            encoding="utf-8",
+        )
+        control = self._control("topology.txt", "1\n1\n1\n1 44\n")
+        output = self.root / "topology.dat"
+        result = convert_element_types_by_material(str(source), str(control), str(output))
+        mesh = read_mesh(output)
+        self.assertEqual(result.metrics["changed"], 1)
+        self.assertIsInstance(mesh.elements[0], PolygonSolid2D)
+        self.assertIsInstance(mesh.elements[1], QuadSolid2D)
+        self.assertEqual(mesh.elements[0].t_id, 44)
+        self.assertEqual(mesh.elements[0].m_id, 1)
+        self.assertEqual(mesh.elements[0].node_ids, (1, 2, 3, 4))
+        self.assertEqual(mesh.elements[1].t_id, 1)
+
     def test_pore_constraints_use_material_adjacency(self):
         control = self._control("pore.txt", "1\n1 2\n")
         output = self.root / "pore.dat"
@@ -154,6 +187,85 @@ class CoreServiceTests(unittest.TestCase):
         mesh = read_mesh(output)
         self.assertEqual([node.x for node in mesh.nodes], [0.0, 2.0, 0.0, 0.0, 3.0])
         self.assertEqual(mesh.elements[0].node_ids, (1, 2, 3, 4, 4, 4, 4, 4))
+
+    def test_scale_all_nodes_by_center_node_keeps_connectivity(self):
+        control = self._control(
+            "scale_center_node.txt",
+            "CENTER_NODE_ID = 2\n"
+            "SCALE_X = 2\n"
+            "SCALE_Y = 0.5\n"
+            "SCALE_Z = 1\n",
+        )
+        output = self.root / "scaled_by_center_node.dat"
+        result = scale_all_nodes_by_center_node(
+            str(self.mesh_path), str(control), str(output)
+        )
+        mesh = read_mesh(output)
+        self.assertEqual(result.metrics["center_node_id"], 2)
+        self.assertEqual(mesh.node_map[2].coordinates, (1.0, 0.0, 0.0))
+        self.assertEqual(mesh.node_map[1].coordinates, (-1.0, 0.0, 0.0))
+        self.assertEqual(mesh.node_map[3].coordinates, (-1.0, 0.5, 0.0))
+        self.assertEqual(mesh.node_map[5].coordinates, (3.0, 0.0, 0.0))
+        self.assertEqual(mesh.elements[0].node_ids, (1, 2, 3, 4, 4, 4, 4, 4))
+
+    def test_node_and_element_id_offsets_update_connectivity(self):
+        output = self.root / "offset_ids.dat"
+        result = offset_mesh_ids(
+            str(self.mesh_path),
+            node_id_offset=100,
+            element_id_offset=200,
+            output_path=str(output),
+        )
+        mesh = read_mesh(output)
+        self.assertEqual([node.node_id for node in mesh.nodes], [101, 102, 103, 104, 105])
+        self.assertEqual([element.e_id for element in mesh.elements], [201, 202])
+        self.assertEqual(
+            mesh.elements[0].node_ids,
+            (101, 102, 103, 104, 104, 104, 104, 104),
+        )
+        self.assertEqual(result.metrics["node_id_offset"], 100)
+        self.assertEqual(result.metrics["element_id_offset"], 200)
+
+        with self.assertRaisesRegex(ValueError, "节点号偏移后不能小于 0"):
+            offset_mesh_ids(
+                str(self.mesh_path),
+                node_id_offset=-2,
+                element_id_offset=0,
+                output_path=str(self.root / "invalid_offset.dat"),
+            )
+
+    def test_merge_close_nodes_uses_transitive_groups_and_updates_connectivity(self):
+        source = self.root / "close_nodes.dat"
+        source.write_text(
+            "node\n"
+            "1 0.00 0 0 0 0 0 0 0 0 0\n"
+            "2 0.0625 0 0 1 0 0 0 0 0 0\n"
+            "3 0.125 0 0 0 1 0 0 0 0 0\n"
+            "4 1.00 0 0 0 0 1 0 0 0 0\n"
+            "5 1.125 0 0 0 0 0 0 0 0 0\n"
+            "end node\n"
+            "element\n"
+            "1 44 0 1 0 0 1 2 3 4 5\n"
+            "end element\n",
+            encoding="utf-8",
+        )
+        output = self.root / "merged_nodes.dat"
+        result = merge_close_nodes(
+            str(source), distance_tolerance=0.125, output_path=str(output)
+        )
+        mesh = read_mesh(output)
+        self.assertEqual([node.node_id for node in mesh.nodes], [1, 4, 5])
+        self.assertEqual(mesh.elements[0].node_ids, (1, 1, 1, 4, 5))
+        self.assertEqual((mesh.node_map[1].ux, mesh.node_map[1].uy), (1, 1))
+        self.assertEqual(result.metrics["merged_nodes"], 2)
+        self.assertEqual(result.metrics["merge_groups"], 1)
+        self.assertEqual(result.metrics["neighbor_pairs"], 2)
+        self.assertEqual(result.metrics["collapsed_elements"], 1)
+
+        with self.assertRaisesRegex(ValueError, "合并距离必须"):
+            merge_close_nodes(
+                str(source), distance_tolerance=0, output_path=str(self.root / "bad.dat")
+            )
 
     def test_range_export_preserves_original_order(self):
         output = self.root / "selected.dat"

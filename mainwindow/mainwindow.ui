@@ -46,6 +46,7 @@
     <addaction name="actionChangeFillIDByFill"/>
     <addaction name="actionChangeAllFillID"/>
     <addaction name="actionScaleCoorByDirection"/>
+    <addaction name="actionScaleAllNodesByCenterNode"/>
     <addaction name="actionExportElementsByRange"/>
    </widget>
    <addaction name="menu"/>
@@ -113,6 +114,11 @@
   <action name="actionScaleCoorByDirection">
    <property name="text">
     <string>节点缩放</string>
+   </property>
+  </action>
+  <action name="actionScaleAllNodesByCenterNode">
+   <property name="text">
+    <string>以节点为中心缩放所有节点</string>
    </property>
   </action>
   <action name="actionExportElementsByRange">
